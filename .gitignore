@@ -1,0 +1,38 @@
+# ============================================================================
+# OBD-II Scanner v7 (Qt5) — .gitignore
+# ============================================================================
+
+# --- Directorios de compilación ---
+build/
+obj/
+bin/
+screenshots/
+
+# --- Logs y capturas de sesión (generados en tiempo de ejecución) ---
+logs/
+screenshots/
+
+# --- Archivos generados por Qt MOC (Meta-Object Compiler) ---
+moc_*.cpp
+
+# --- Archivos de dependencias generados por compilador (-MMD) ---
+*.d
+
+# --- Editor / OS ---
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+..gitignore.swp
+
+# --- CMake (ignorar solo Makefile dentro de build/, NO el Makefile raíz) ---
+build/Makefile
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+CTestTestfile.cmake
+
+# --- Qt Autogen ---
+*_autogen/

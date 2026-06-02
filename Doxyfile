@@ -1,0 +1,39 @@
+# Doxyfile for ELM327 OBD-II Diagnostic Tool
+# Generate HTML documentation from Doxygen comments
+
+PROJECT_NAME           = "ELM327 OBD-II Diagnostic Tool v7"
+PROJECT_NUMBER         = "7.0"
+PROJECT_BRIEF          = "Escáner de diagnóstico automotriz profesional vía ELM327 Bluetooth"
+OUTPUT_DIRECTORY       = docs/doxygen
+INPUT                  = include/ src/ README.md
+FILE_PATTERNS          = *.hpp *.cpp *.md
+RECURSIVE              = YES
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+CASE_SENSE_NAMES       = YES
+SORT_MEMBER_DOCS       = YES
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+HTML_OUTPUT            = html
+HTML_HEADER            =
+HTML_FOOTER            =
+HTML_STYLESHEET        =
+HTML_TIMESTAMP         = YES
+USE_MDFILE_AS_MAINPAGE = README.md
+QUIET                  = NO
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = YES
+WARN_FORMAT            = "$file:$line: $text"
+INPUT_ENCODING         = UTF-8
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
