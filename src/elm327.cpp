@@ -18,24 +18,38 @@
 #include "logger.hpp"
 
 #include <iostream>
+#ifndef Q_OS_WIN
 #include <unistd.h>
+#endif
 #include <cstring>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <locale>
 #include <thread>
 #include <chrono>
 
+#ifndef Q_OS_WIN
 #include <sys/socket.h>
+#endif
+
+#if !defined(Q_OS_WIN) && defined(USE_BLUEZ)
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/rfcomm.h>
+#endif
 
 // ============================================================================
 // Constructor / Destructor
 // ============================================================================
 
 ELM327::ELM327(const std::string& macAddr, int ch)
-    : sock(-1), mac(macAddr), channel(ch), m_stoppedRecovery(false),
+    :
+#ifdef Q_OS_WIN
+      m_hCom(INVALID_HANDLE_VALUE),
+#else
+      sock(-1),
+#endif
+      mac(macAddr), channel(ch), m_stoppedRecovery(false),
       m_stoppedPenaltyMs(0), m_consecutiveSuccess(0), m_stoppedCount(0),
       m_sessionLog(nullptr) {}
 
@@ -50,6 +64,71 @@ ELM327::~ELM327()
 
 bool ELM327::connectBT()
 {
+#ifdef Q_OS_WIN
+    // ── Conexión Windows: abrir puerto COM virtual Bluetooth SPP ──
+    std::string comPort = "\\\\.\\" + mac;  // "COM3", "COM4", etc.
+    std::cout << "[INFO] Abriendo " << comPort << "...\n";
+
+    m_hCom = CreateFileA(
+        comPort.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        0,              // exclusivo
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+
+    if (m_hCom == INVALID_HANDLE_VALUE) {
+        std::cerr << "[ERROR] CreateFile (" << comPort << "): " << GetLastError() << std::endl;
+        return false;
+    }
+
+    // Configurar buffer de entrada/salida
+    SetupComm(m_hCom, 4096, 4096);
+
+    // Configurar parámetros del puerto: 38400 baud, 8N1
+    DCB dcb;
+    memset(&dcb, 0, sizeof(dcb));
+    dcb.DCBlength = sizeof(DCB);
+    if (!GetCommState(m_hCom, &dcb)) {
+        std::cerr << "[ERROR] GetCommState: " << GetLastError() << std::endl;
+        CloseHandle(m_hCom);
+        m_hCom = INVALID_HANDLE_VALUE;
+        return false;
+    }
+
+    dcb.BaudRate = CBR_38400;
+    dcb.ByteSize = 8;
+    dcb.Parity = NOPARITY;
+    dcb.StopBits = ONESTOPBIT;
+    dcb.fDtrControl = DTR_CONTROL_ENABLE;
+    dcb.fRtsControl = RTS_CONTROL_ENABLE;
+
+    if (!SetCommState(m_hCom, &dcb)) {
+        std::cerr << "[ERROR] SetCommState: " << GetLastError() << std::endl;
+        CloseHandle(m_hCom);
+        m_hCom = INVALID_HANDLE_VALUE;
+        return false;
+    }
+
+    // Timeouts por defecto (se ajustan en cada send/read)
+    COMMTIMEOUTS timeouts;
+    memset(&timeouts, 0, sizeof(timeouts));
+    timeouts.ReadIntervalTimeout = 50;
+    timeouts.ReadTotalTimeoutMultiplier = 10;
+    timeouts.ReadTotalTimeoutConstant = 1000;
+    timeouts.WriteTotalTimeoutMultiplier = 10;
+    timeouts.WriteTotalTimeoutConstant = 1000;
+    SetCommTimeouts(m_hCom, &timeouts);
+
+    // Purge buffers por si acaso
+    PurgeComm(m_hCom, PURGE_RXCLEAR | PURGE_TXCLEAR);
+
+    std::cout << "[OK] " << comPort << " abierto correctamente!\n";
+#else
+#ifdef USE_BLUEZ
+    // ── Conexión Linux: Bluetooth RFCOMM socket ──
     struct sockaddr_rc addr{};
 
     sock = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
@@ -72,8 +151,13 @@ bool ELM327::connectBT()
     }
 
     std::cout << "[OK] Conectado!\n";
+#else
+    std::cerr << "[ERROR] Compilado sin soporte Bluetooth (falta libbluetooth-dev)" << std::endl;
+    return false;
+#endif
+#endif
 
-    // Inicializar ELM327
+    // Inicializar ELM327 (común a ambas plataformas)
     send("ATZ", 1000);
     send("ATE0"); // echo off
     send("ATL0"); // linefeed off
@@ -89,12 +173,21 @@ bool ELM327::connectBT()
 
 void ELM327::disconnect()
 {
+#ifdef Q_OS_WIN
+    if (m_hCom != INVALID_HANDLE_VALUE)
+    {
+        std::cout << "[INFO] Cerrando conexión COM\n";
+        CloseHandle(m_hCom);
+        m_hCom = INVALID_HANDLE_VALUE;
+    }
+#else
     if (sock >= 0)
     {
         std::cout << "[INFO] Cerrando conexión\n";
         close(sock);
         sock = -1;
     }
+#endif
 }
 
 std::string ELM327::readRaw()
@@ -102,20 +195,29 @@ std::string ELM327::readRaw()
     if (!isConnected()) return "";
     
     char buffer[4096];
+#ifdef Q_OS_WIN
+    DWORD read;
+    if (ReadFile(m_hCom, buffer, sizeof(buffer)-1, &read, NULL) && read > 0)
+    {
+        buffer[read] = 0;
+        std::string result(buffer);
+        result.erase(std::remove(result.begin(), result.end(), '\r'), result.end());
+        result.erase(std::remove(result.begin(), result.end(), '\n'), result.end());
+        result.erase(std::remove(result.begin(), result.end(), ' '), result.end());
+        return result;
+    }
+#else
     int n = read(sock, buffer, sizeof(buffer)-1);
-
     if (n > 0)
     {
         buffer[n] = 0;
         std::string result(buffer);
-        
-        // Limpiar caracteres no deseados
         result.erase(std::remove(result.begin(), result.end(), '\r'), result.end());
         result.erase(std::remove(result.begin(), result.end(), '\n'), result.end());
         result.erase(std::remove(result.begin(), result.end(), ' '), result.end());
-        
         return result;
     }
+#endif
 
     return "";
 }
@@ -128,9 +230,37 @@ std::string ELM327::sendRaw(const std::string& cmd, int timeoutMs) {
     std::string full = cmd + "\r";
     std::cout << "[TX RAW] " << cmd << std::endl;
     
+#ifdef Q_OS_WIN
+    DWORD written;
+    WriteFile(m_hCom, full.c_str(), (DWORD)full.size(), &written, NULL);
+
+    int effectiveTimeout = timeoutMs + m_stoppedPenaltyMs;
+    std::string response;
+    char buffer[1024];
+
+    COMMTIMEOUTS ct;
+    GetCommTimeouts(m_hCom, &ct);
+    COMMTIMEOUTS newCt = ct;
+    newCt.ReadIntervalTimeout = 50;
+    newCt.ReadTotalTimeoutMultiplier = 10;
+    newCt.ReadTotalTimeoutConstant = (DWORD)effectiveTimeout;
+    newCt.WriteTotalTimeoutMultiplier = 10;
+    newCt.WriteTotalTimeoutConstant = 1000;
+    SetCommTimeouts(m_hCom, &newCt);
+
+    while (true) {
+        DWORD read;
+        if (!ReadFile(m_hCom, buffer, sizeof(buffer) - 1, &read, NULL)) break;
+        if (read == 0) break;
+        buffer[read] = '\0';
+        response += buffer;
+        if (response.find(">") != std::string::npos) break;
+    }
+    SetCommTimeouts(m_hCom, &ct);  // restaurar timeouts originales
+#else
     ::write(sock, full.c_str(), full.size());
     
-    int effectiveTimeout = timeoutMs + m_stoppedPenaltyMs;  // + penalidad adaptativa
+    int effectiveTimeout = timeoutMs + m_stoppedPenaltyMs;
     char buffer[1024];
     std::string response;
     fd_set fds;
@@ -152,6 +282,7 @@ std::string ELM327::sendRaw(const std::string& cmd, int timeoutMs) {
         tv.tv_sec = 0;
         tv.tv_usec = 300000;
     }
+#endif
     
     response.erase(std::remove(response.begin(), response.end(), '\r'), response.end());
     response.erase(std::remove(response.begin(), response.end(), '\n'), response.end());
@@ -201,10 +332,43 @@ std::string ELM327::send(const std::string& cmd, int delayMs)
 
     std::cout << "[TX] " << cmd << std::endl;
 
+#ifdef Q_OS_WIN
+    DWORD written;
+    WriteFile(m_hCom, full.c_str(), (DWORD)full.size(), &written, NULL);
+
+    char buffer[4096];
+    std::string response;
+    int timeoutMs = (delayMs > 0) ? delayMs : 200;
+    int effectiveTimeout = timeoutMs + m_stoppedPenaltyMs;
+
+    // Mostrar penalidad en el log si está activa
+    if (m_stoppedPenaltyMs > 0 && cmd.substr(0, 2) != "AT") {
+        std::cout << "[ADAPT] +" << m_stoppedPenaltyMs << "ms (" << m_stoppedCount << " STOPPED)\n";
+    }
+
+    // Configurar timeouts para esta lectura
+    COMMTIMEOUTS oldCt;
+    GetCommTimeouts(m_hCom, &oldCt);
+    COMMTIMEOUTS newCt = oldCt;
+    newCt.ReadIntervalTimeout = 50;
+    newCt.ReadTotalTimeoutMultiplier = 10;
+    newCt.ReadTotalTimeoutConstant = (DWORD)effectiveTimeout;
+    newCt.WriteTotalTimeoutMultiplier = 10;
+    newCt.WriteTotalTimeoutConstant = 1000;
+    SetCommTimeouts(m_hCom, &newCt);
+
+    while (true) {
+        DWORD read;
+        if (!ReadFile(m_hCom, buffer, sizeof(buffer) - 1, &read, NULL)) break;
+        if (read == 0) break;
+        buffer[read] = '\0';
+        response += buffer;
+        if (response.find('>') != std::string::npos) break;
+    }
+    SetCommTimeouts(m_hCom, &oldCt);  // restaurar
+#else
     ::write(sock, full.c_str(), full.size());
     
-    // Usar select() para timeout en lugar de solo usleep
-    // Esto evita quedarse colgado si el ELM327 no responde
     char buffer[4096];
     std::string response;
     fd_set fds;
@@ -214,33 +378,31 @@ std::string ELM327::send(const std::string& cmd, int delayMs)
     FD_ZERO(&fds);
     FD_SET(sock, &fds);
     int timeoutMs = (delayMs > 0) ? delayMs : 200;
-    int effectiveTimeout = timeoutMs + m_stoppedPenaltyMs;  // + penalidad adaptativa
+    int effectiveTimeout = timeoutMs + m_stoppedPenaltyMs;
     tv.tv_sec = effectiveTimeout / 1000;
     tv.tv_usec = (effectiveTimeout % 1000) * 1000;
     
-    // Mostrar penalidad en el log si está activa
     if (m_stoppedPenaltyMs > 0 && cmd.substr(0, 2) != "AT") {
         std::cout << "[ADAPT] +" << m_stoppedPenaltyMs << "ms (" << m_stoppedCount << " STOPPED)\n";
     }
     
     while (true) {
         ret = select(sock + 1, &fds, NULL, NULL, &tv);
-        if (ret <= 0) break; // timeout o error
+        if (ret <= 0) break;
         
         int n = ::recv(sock, buffer, sizeof(buffer) - 1, 0);
         if (n <= 0) break;
         buffer[n] = '\0';
         response += buffer;
         
-        // Si recibimos el prompt '>', la respuesta está completa
         if (response.find('>') != std::string::npos) break;
         
-        // Resetear timeout para leer más datos
         FD_ZERO(&fds);
         FD_SET(sock, &fds);
         tv.tv_sec = 0;
-        tv.tv_usec = 300000; // 300ms adicionales
+        tv.tv_usec = 300000;
     }
+#endif
     
     // Limpiar caracteres de control para el log
     std::string logResp = response;
@@ -693,9 +855,9 @@ std::vector<OxygenSensor> ELM327::getOxygenSensors()
                 int voltageByte = std::stoi(bytes1[i], nullptr, 16);
                 int trimByte = std::stoi(bytes1[i+1], nullptr, 16);
                 
-                // Si ambos son 0xFF o 0x00, no hay sensor
-                if ((voltageByte == 0xFF && trimByte == 0xFF) || 
-                    (voltageByte == 0x00 && trimByte == 0x00)) {
+                // Si cualquiera es 0xFF o 0x00, no hay sensor (falso positivo)
+                if (voltageByte == 0xFF || voltageByte == 0x00 || 
+                    trimByte == 0xFF || trimByte == 0x00) {
                     continue;
                 }
                 
@@ -725,8 +887,9 @@ std::vector<OxygenSensor> ELM327::getOxygenSensors()
                 int voltageByte = std::stoi(bytes2[i], nullptr, 16);
                 int trimByte = std::stoi(bytes2[i+1], nullptr, 16);
                 
-                if ((voltageByte == 0xFF && trimByte == 0xFF) || 
-                    (voltageByte == 0x00 && trimByte == 0x00)) {
+                // Si cualquiera es 0xFF o 0x00, no hay sensor (falso positivo)
+                if (voltageByte == 0xFF || voltageByte == 0x00 || 
+                    trimByte == 0xFF || trimByte == 0x00) {
                     continue;
                 }
                 
@@ -751,8 +914,9 @@ std::vector<OxygenSensor> ELM327::getOxygenSensors()
                 int voltageByte = std::stoi(bytes3[i], nullptr, 16);
                 int trimByte = std::stoi(bytes3[i+1], nullptr, 16);
                 
-                if ((voltageByte == 0xFF && trimByte == 0xFF) || 
-                    (voltageByte == 0x00 && trimByte == 0x00)) {
+                // Si cualquiera es 0xFF o 0x00, no hay sensor (falso positivo)
+                if (voltageByte == 0xFF || voltageByte == 0x00 || 
+                    trimByte == 0xFF || trimByte == 0x00) {
                     continue;
                 }
                 
@@ -777,8 +941,9 @@ std::vector<OxygenSensor> ELM327::getOxygenSensors()
                 int voltageByte = std::stoi(bytes4[i], nullptr, 16);
                 int trimByte = std::stoi(bytes4[i+1], nullptr, 16);
                 
-                if ((voltageByte == 0xFF && trimByte == 0xFF) || 
-                    (voltageByte == 0x00 && trimByte == 0x00)) {
+                // Si cualquiera es 0xFF o 0x00, no hay sensor (falso positivo)
+                if (voltageByte == 0xFF || voltageByte == 0x00 || 
+                    trimByte == 0xFF || trimByte == 0x00) {
                     continue;
                 }
                 
@@ -1276,7 +1441,11 @@ std::vector<ELM327::ModuleScanResult> ELM327::autoScan() {
         // Configurar header para este módulo
         send("AT SH " + idStr, 30);
         send("AT CRA " + std::to_string(id + 8), 30);
+#ifndef Q_OS_WIN
         usleep(80000);
+#else
+        Sleep(80);
+#endif
         
         // Verificar si responde con PID 0100
         std::string r = send("0100", 200);
@@ -1322,13 +1491,22 @@ std::string ELM327::getVIN()
 {
     // Primero, obtener la respuesta cruda sin procesar
     std::string fullCmd = "0902\r";
+#ifdef Q_OS_WIN
+    DWORD written;
+    WriteFile(m_hCom, fullCmd.c_str(), (DWORD)fullCmd.size(), &written, NULL);
+    Sleep(500);
+
+    char buffer[1024];
+    DWORD n;
+    if (!ReadFile(m_hCom, buffer, sizeof(buffer)-1, &n, NULL) || n <= 0) return "No disponible";
+#else
     write(sock, fullCmd.c_str(), fullCmd.size());
     usleep(500000);
     
-    // Leer respuesta cruda
     char buffer[1024];
     int n = read(sock, buffer, sizeof(buffer)-1);
     if (n <= 0) return "No disponible";
+#endif
     
     buffer[n] = '\0';
     std::string response(buffer);
@@ -1467,7 +1645,11 @@ std::string ELM327::sendCommand(const std::string& pidHex)
     // 7E0/7E8 son los estándar OBD-II, no necesitan save/restore
     send("AT SH 7E0");   // Cabezal de solicitud
     send("AT CRA 7E8");  // Cabezal de respuesta
+#ifndef Q_OS_WIN
     usleep(50000);       // Pequeña pausa
+#else
+    Sleep(50);
+#endif
 
     // Construir comando modo 22
     std::string cmd = "22 " + pidHex;
@@ -1475,6 +1657,32 @@ std::string ELM327::sendCommand(const std::string& pidHex)
 
     // Enviar comando
     std::string full = cmd + "\r";
+#ifdef Q_OS_WIN
+    DWORD written;
+    WriteFile(m_hCom, full.c_str(), (DWORD)full.size(), &written, NULL);
+
+    // Leer respuesta con timeout (500ms)
+    char buffer[512];
+    std::string response;
+
+    COMMTIMEOUTS oldCt;
+    GetCommTimeouts(m_hCom, &oldCt);
+    COMMTIMEOUTS newCt = oldCt;
+    newCt.ReadIntervalTimeout = 50;
+    newCt.ReadTotalTimeoutMultiplier = 10;
+    newCt.ReadTotalTimeoutConstant = 500;
+    SetCommTimeouts(m_hCom, &newCt);
+
+    while (true) {
+        DWORD read;
+        if (!ReadFile(m_hCom, buffer, sizeof(buffer) - 1, &read, NULL)) break;
+        if (read == 0) break;
+        buffer[read] = '\0';
+        response += buffer;
+        if (response.find(">") != std::string::npos) break;
+    }
+    SetCommTimeouts(m_hCom, &oldCt);
+#else
     ::write(sock, full.c_str(), full.size());
 
     // Leer respuesta con timeout (500ms)
@@ -1501,6 +1709,7 @@ std::string ELM327::sendCommand(const std::string& pidHex)
 
         if (response.find(">") != std::string::npos) break;
     }
+#endif
 
     // Limpiar respuesta
     response.erase(std::remove(response.begin(), response.end(), '\r'), response.end());
@@ -1785,69 +1994,113 @@ ELM327::DashboardData ELM327::getDashboardFast() {
     // Asegurar configuración normal antes de lectura rápida
     ensureNormalConfig();
     
-    // Leer cada PID individualmente con send() para evitar STOPPED
-    // Esto es más lento (~3s) pero mucho más confiable que el batch
-    std::string rawData;
+    // Leer cada PID individualmente y procesar cada respuesta por separado
+    // Esto evita el bug de concatenación de respuestas donde '>' truncaba los datos
     
-    // PIDs a leer: RPM, Speed, Coolant, Load, Throttle, MAP, IntakeTemp, Timing, MAF, FuelLevel
-    const char* pids[] = {"010C", "010D", "0105", "0104", "0111", "010B", "010F", "010E", "0110", "012F"};
-    const int numPids = 10;
-    
-    for (int i = 0; i < numPids; i++) {
-        std::string resp = send(std::string(pids[i]), 300);
-        rawData += resp;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // pausa entre comandos (evita STOPPED)
-    }
-    
-    // Procesar respuestas acumuladas
-    auto bytes = splitResponse(rawData);
-    
-    for (size_t i = 0; i + 2 < bytes.size(); ) {
-        if (bytes[i] == "41") {
-            std::string pid = bytes[i+1];
+    // RPM (010C) - 2 bytes: (A*256+B)/4
+    {
+        std::string r = send("010C", 300);
+        auto b = splitResponse(r);
+        if (b.size() >= 4) {
             try {
-                if (pid == "0C" && i + 3 < bytes.size()) { // RPM
-                    int a = std::stoi(bytes[i+2], nullptr, 16);
-                    int b = std::stoi(bytes[i+3], nullptr, 16);
-                    d.rpm = (a * 256 + b) / 4;
-                    i += 4;
-                } else if (pid == "0D") { // Speed
-                    d.speed = std::stoi(bytes[i+2], nullptr, 16);
-                    i += 3;
-                } else if (pid == "05") { // Coolant temp
-                    d.coolant = std::stoi(bytes[i+2], nullptr, 16) - 40;
-                    i += 3;
-                } else if (pid == "04") { // Engine load
-                    d.load = (std::stoi(bytes[i+2], nullptr, 16) * 100) / 255;
-                    i += 3;
-                } else if (pid == "11") { // Throttle
-                    d.throttle = (std::stoi(bytes[i+2], nullptr, 16) * 100.0) / 255.0;
-                    i += 3;
-                } else if (pid == "0B") { // Intake pressure
-                    d.intakePressure = std::stoi(bytes[i+2], nullptr, 16);
-                    i += 3;
-                } else if (pid == "0F") { // Intake temp
-                    d.intakeTemp = std::stoi(bytes[i+2], nullptr, 16) - 40;
-                    i += 3;
-                } else if (pid == "0E") { // Timing advance
-                    d.timing = (std::stoi(bytes[i+2], nullptr, 16) / 2.0) - 64;
-                    i += 3;
-                } else if (pid == "10" && i + 3 < bytes.size()) { // MAF
-                    int a = std::stoi(bytes[i+2], nullptr, 16);
-                    int b = std::stoi(bytes[i+3], nullptr, 16);
-                    d.maf = (a * 256 + b) / 100.0;
-                    i += 4;
-                } else if (pid == "2F") { // Fuel level
-                    d.fuelLevel = (std::stoi(bytes[i+2], nullptr, 16) * 100.0) / 255.0;
-                    i += 3;
-                } else {
-                    i += 3;
-                }
-            } catch (...) {
-                i += 3;
-            }
-        } else {
-            i++;
+                int a = std::stoi(b[2], nullptr, 16);
+                int b2 = std::stoi(b[3], nullptr, 16);
+                d.rpm = (a * 256 + b2) / 4;
+            } catch (...) {}
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    // Speed (010D) - 1 byte
+    {
+        std::string r = send("010D", 300);
+        auto b = splitResponse(r);
+        if (b.size() >= 3) {
+            try { d.speed = std::stoi(b[2], nullptr, 16); } catch (...) {}
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    // Coolant temp (0105) - 1 byte: A-40
+    {
+        std::string r = send("0105", 300);
+        auto b = splitResponse(r);
+        if (b.size() >= 3) {
+            try { d.coolant = std::stoi(b[2], nullptr, 16) - 40; } catch (...) {}
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    // Engine load (0104) - 1 byte: A*100/255
+    {
+        std::string r = send("0104", 300);
+        auto b = splitResponse(r);
+        if (b.size() >= 3) {
+            try { d.load = (std::stoi(b[2], nullptr, 16) * 100) / 255; } catch (...) {}
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    // Throttle (0111) - 1 byte: A*100/255
+    {
+        std::string r = send("0111", 300);
+        auto b = splitResponse(r);
+        if (b.size() >= 3) {
+            try { d.throttle = (std::stoi(b[2], nullptr, 16) * 100.0) / 255.0; } catch (...) {}
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    // Intake pressure (010B) - 1 byte
+    {
+        std::string r = send("010B", 300);
+        auto b = splitResponse(r);
+        if (b.size() >= 3) {
+            try { d.intakePressure = std::stoi(b[2], nullptr, 16); } catch (...) {}
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    // Intake temp (010F) - 1 byte: A-40
+    {
+        std::string r = send("010F", 300);
+        auto b = splitResponse(r);
+        if (b.size() >= 3) {
+            try { d.intakeTemp = std::stoi(b[2], nullptr, 16) - 40; } catch (...) {}
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    // Timing advance (010E) - 1 byte: A/2 - 64
+    {
+        std::string r = send("010E", 300);
+        auto b = splitResponse(r);
+        if (b.size() >= 3) {
+            try { d.timing = (std::stoi(b[2], nullptr, 16) / 2.0) - 64; } catch (...) {}
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    // MAF (0110) - 2 bytes: (A*256+B)/100
+    {
+        std::string r = send("0110", 300);
+        auto b = splitResponse(r);
+        if (b.size() >= 4) {
+            try {
+                int a = std::stoi(b[2], nullptr, 16);
+                int b2 = std::stoi(b[3], nullptr, 16);
+                d.maf = (a * 256 + b2) / 100.0;
+            } catch (...) {}
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    // Fuel level (012F) - 1 byte: A*100/255
+    {
+        std::string r = send("012F", 300);
+        auto b = splitResponse(r);
+        if (b.size() >= 3) {
+            try { d.fuelLevel = (std::stoi(b[2], nullptr, 16) * 100.0) / 255.0; } catch (...) {}
         }
     }
     
@@ -1867,8 +2120,14 @@ bool ELM327::recoverFromStopped() {
     
     // 1. Enviar comando vacío para "despertar"
     const char* wake = "\r";
+#ifdef Q_OS_WIN
+    DWORD written;
+    WriteFile(m_hCom, wake, 1, &written, NULL);
+    Sleep(150);
+#else
     ::write(sock, wake, 1);
     usleep(150000);
+#endif
     
     // 2. ATD (Defaults) usando send() con select() timeout (más robusto que raw write)
     std::string atdResp = send("ATD", 500);
@@ -1886,7 +2145,23 @@ bool ELM327::recoverFromStopped() {
     }
     
     // 4. Limpiar buffer completamente con timeout progresivo
-    //    Cada iteración resetea tv para evitar acumulación de timeout
+#ifdef Q_OS_WIN
+    char tmp[256];
+    COMMTIMEOUTS oldCt;
+    GetCommTimeouts(m_hCom, &oldCt);
+    COMMTIMEOUTS newCt = oldCt;
+    newCt.ReadIntervalTimeout = 50;
+    newCt.ReadTotalTimeoutMultiplier = 10;
+    newCt.ReadTotalTimeoutConstant = 200;
+    SetCommTimeouts(m_hCom, &newCt);
+
+    for (int attempt = 0; attempt < 5; attempt++) {
+        DWORD read;
+        if (!ReadFile(m_hCom, tmp, sizeof(tmp) - 1, &read, NULL)) break;
+        if (read == 0) break;
+    }
+    SetCommTimeouts(m_hCom, &oldCt);
+#else
     char tmp[256];
     fd_set fds;
     struct timeval tv;
@@ -1895,13 +2170,14 @@ bool ELM327::recoverFromStopped() {
         FD_ZERO(&fds);
         FD_SET(sock, &fds);
         tv.tv_sec = 0;
-        tv.tv_usec = 200000;  // 200ms por intento
+        tv.tv_usec = 200000;
         
         int ret = select(sock + 1, &fds, NULL, NULL, &tv);
-        if (ret <= 0) break; // No hay más datos o timeout
+        if (ret <= 0) break;
         
         if (::recv(sock, tmp, sizeof(tmp) - 1, 0) <= 0) break;
     }
+#endif
     
     // 5. Reconfigurar completamente (ATSP0 re-detecta protocolo CAN)
     send("ATE0", 150);   // Echo OFF
@@ -1940,32 +2216,39 @@ void ELM327::logAllSensorsRaw(const std::string& filename) {
     // Cabecera: timestamp, PID, comando, respuesta_hex, valor_interpretado
     file << "timestamp,pid,command,hex_response,interpreted_value\n";
     
+    // Helper para formatear double con punto decimal (locale C) para CSV
+    auto fmt = [](double val) -> std::string {
+        std::ostringstream oss;
+        oss.imbue(std::locale::classic());
+        oss << val;
+        return oss.str();
+    };
+
     // Lista de PIDs a consultar (nombre, comando, función de interpretación)
     struct SensorInfo {
         std::string name;
         std::string cmd;
-        std::function<std::string()> interpreter; // lambda que devuelve string
+        std::function<std::string()> interpreter;
     };
     
-    // Usamos capturas de this para llamar a los métodos
     std::vector<SensorInfo> sensors = {
         {"RPM", "010C", [this]() { return std::to_string(getRPM()); }},
         {"Speed", "010D", [this]() { return std::to_string(getSpeed()); }},
         {"CoolantTemp", "0105", [this]() { return std::to_string(getCoolantTemp()); }},
         {"EngineLoad", "0104", [this]() { return std::to_string(getEngineLoad()); }},
-        {"Throttle", "0111", [this]() { return std::to_string(getThrottlePosition()); }},
-        {"IntakePressure", "010B", [this]() { return std::to_string(getIntakePressure()); }},
+        {"Throttle", "0111", [this, fmt]() { return fmt(getThrottlePosition()); }},
+        {"IntakePressure", "010B", [this, fmt]() { return fmt(getIntakePressure()); }},
         {"IntakeTemp", "010F", [this]() { return std::to_string(getIntakeTemp()); }},
-        {"TimingAdvance", "010E", [this]() { return std::to_string(getTimingAdvance()); }},
-        {"MAF", "0110", [this]() { return std::to_string(getMAF()); }},
-        {"FuelLevel", "012F", [this]() { return std::to_string(getFuelLevel()); }},
-        {"BaroPressure", "0133", [this]() { return std::to_string(getBarometricPressure()); }},
-        {"LTFT_Bank1", "0107", [this]() { return std::to_string(getLongTermTrimBank1()); }},
-        {"LTFT_Bank2", "0108", [this]() { return std::to_string(getLongTermTrimBank2()); }},
-        {"STFT_Bank1_S1", "0114", [this]() { return std::to_string(getShortTermTrimBank1()); }},
-        {"STFT_Bank2_S1", "0115", [this]() { return std::to_string(getShortTermTrimBank2()); }},
-        {"O2_B1S1_Voltage", "0114", [this]() { return std::to_string(getO2Sensor(1,1).voltage); }},
-        {"O2_B2S1_Voltage", "0115", [this]() { return std::to_string(getO2Sensor(2,1).voltage); }}
+        {"TimingAdvance", "010E", [this, fmt]() { return fmt(getTimingAdvance()); }},
+        {"MAF", "0110", [this, fmt]() { return fmt(getMAF()); }},
+        {"FuelLevel", "012F", [this, fmt]() { return fmt(getFuelLevel()); }},
+        {"BaroPressure", "0133", [this, fmt]() { return fmt(getBarometricPressure()); }},
+        {"LTFT_Bank1", "0107", [this, fmt]() { return fmt(getLongTermTrimBank1()); }},
+        {"LTFT_Bank2", "0108", [this, fmt]() { return fmt(getLongTermTrimBank2()); }},
+        {"STFT_Bank1_S1", "0114", [this, fmt]() { return fmt(getShortTermTrimBank1()); }},
+        {"STFT_Bank2_S1", "0115", [this, fmt]() { return fmt(getShortTermTrimBank2()); }},
+        {"O2_B1S1_Voltage", "0114", [this, fmt]() { return fmt(getO2Sensor(1,1).voltage); }},
+        {"O2_B2S1_Voltage", "0115", [this, fmt]() { return fmt(getO2Sensor(2,1).voltage); }}
     };
     
     time_t now = time(nullptr);
@@ -2006,6 +2289,7 @@ void ELM327::logAllSensorsRaw(const std::string& filename) {
 void ELM327::logP0171Diagnostic(const std::string& filename, int durationSec) {
     Logger::ensureLogsDir();
     std::ofstream file(filename);
+    file.imbue(std::locale::classic());
     if (!file.is_open()) {
         std::cerr << "[ERROR] No se pudo crear " << filename << std::endl;
         return;

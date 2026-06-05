@@ -21,6 +21,9 @@
 #include <sstream>
 #include <iostream>
 #include <sys/stat.h>
+#ifdef Q_OS_WIN
+#include <direct.h>
+#endif
 
 Logger::Logger()
 {
@@ -35,8 +38,12 @@ bool Logger::ensureLogsDir()
 {
     struct stat st;
     if (stat("logs", &st) != 0) {
-        // Crear directorio logs/
+        // Crear directorio logs/ (compatible Windows/Linux)
+#ifdef Q_OS_WIN
+        if (_mkdir("logs") != 0) {
+#else
         if (mkdir("logs", 0755) != 0) {
+#endif
             std::cerr << "[WARN] No se pudo crear directorio logs/" << std::endl;
             return false;
         }

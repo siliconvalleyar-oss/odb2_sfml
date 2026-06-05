@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
-project(elm327_app_v7
-    VERSION 7.0
-    DESCRIPTION "Escáner OBD-II profesional con interfaz gráfica Qt5"
+project(elm327_app_v9
+    VERSION 9.0
+    DESCRIPTION "Escáner OBD-II profesional con interfaz gráfica Qt5 — v9"
     LANGUAGES CXX
 )
 
@@ -66,6 +66,12 @@ set(HEADERS
 
 add_definitions(-DUSE_QT5)
 
+if(WIN32)
+    # En MSYS2/MinGW, Q_OS_WIN no se define automáticamente hasta incluir QtCore;
+    # las guardas #ifdef Q_OS_WIN en elm327.cpp/gm_commands.cpp lo necesitan.
+    add_definitions(-DQ_OS_WIN)
+endif()
+
 if(BLUEZ_FOUND)
     add_definitions(-DUSE_BLUEZ)
 endif()
@@ -74,34 +80,34 @@ endif()
 # Ejecutable
 # ============================================================================
 
-add_executable(elm327_app_v7
+add_executable(elm327_app_v9
     ${SOURCES}
     ${HEADERS}
 )
 
 # Directorios de includes
-target_include_directories(elm327_app_v7 PRIVATE
+target_include_directories(elm327_app_v9 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 # Enlazar Qt5
-target_link_libraries(elm327_app_v7 PRIVATE
+target_link_libraries(elm327_app_v9 PRIVATE
     Qt5::Widgets
 )
 
 # Enlazar Qt5 Charts (opcional)
 if(Qt5Charts_FOUND)
-    target_link_libraries(elm327_app_v7 PRIVATE
+    target_link_libraries(elm327_app_v9 PRIVATE
         Qt5::Charts
     )
 endif()
 
 # Enlazar Bluetooth
 if(BLUEZ_FOUND)
-    target_link_libraries(elm327_app_v7 PRIVATE
+    target_link_libraries(elm327_app_v9 PRIVATE
         ${BLUEZ_LIBRARIES}
     )
-    target_include_directories(elm327_app_v7 PRIVATE
+    target_include_directories(elm327_app_v9 PRIVATE
         ${BLUEZ_INCLUDE_DIRS}
     )
     message(STATUS "Bluetooth (bluez) detectado: sí")
@@ -115,7 +121,7 @@ endif()
 
 # Advertencias
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(elm327_app_v7 PRIVATE
+    target_compile_options(elm327_app_v9 PRIVATE
         -Wall -Wextra -Wpedantic
         -Wno-unused-parameter
     )
@@ -127,9 +133,9 @@ endif()
 
 # make run: ejecuta la aplicación
 add_custom_target(run
-    COMMAND ./elm327_app_v7
+    COMMAND ./elm327_app_v9
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    DEPENDS elm327_app_v7
+    DEPENDS elm327_app_v9
 )
 
 # make clean_logs: limpia los archivos de log
@@ -142,4 +148,4 @@ add_custom_target(clean_logs
 # Instalación
 # ============================================================================
 
-install(TARGETS elm327_app_v7 DESTINATION bin)
+install(TARGETS elm327_app_v9 DESTINATION bin)

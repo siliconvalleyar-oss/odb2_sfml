@@ -19,10 +19,15 @@
 #include <cctype>
 #include <cstdint>
 #include <cstring>
+
+#ifndef Q_OS_WIN
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/time.h>
+#else
+#include <windows.h>
+#endif
 
 // ============================================================================
 // Constructor / Destructor
@@ -42,7 +47,11 @@ bool GMCommands::setupGMHeader() {
     // Estos son los valores estándar OBD-II y no necesitan save/restore
     elm->send("AT SH 7E0", 50);
     elm->send("AT CRA 7E8", 50);
+#ifndef Q_OS_WIN
     usleep(50000);
+#else
+    Sleep(50);
+#endif
     return true;
 }
 
@@ -62,11 +71,35 @@ std::string GMCommands::sendMode22WithHeader(const std::string& pidHex) {
     std::string cmd = "22 " + pidHex;
     std::cout << "[TX 22] " << cmd << std::endl;
     
-    // Enviar el comando directamente y leer respuesta con select()
+    // Enviar el comando y leer respuesta
     std::string full = cmd + "\r";
+#ifdef Q_OS_WIN
+    DWORD written;
+    WriteFile(elm->getHandle(), full.c_str(), (DWORD)full.size(), &written, NULL);
+
+    char buffer[1024];
+    std::string response;
+
+    COMMTIMEOUTS oldCt, newCt;
+    GetCommTimeouts(elm->getHandle(), &oldCt);
+    newCt = oldCt;
+    newCt.ReadIntervalTimeout = 50;
+    newCt.ReadTotalTimeoutMultiplier = 10;
+    newCt.ReadTotalTimeoutConstant = 600;
+    SetCommTimeouts(elm->getHandle(), &newCt);
+
+    while (true) {
+        DWORD read;
+        if (!ReadFile(elm->getHandle(), buffer, sizeof(buffer) - 1, &read, NULL)) break;
+        if (read == 0) break;
+        buffer[read] = '\0';
+        response += buffer;
+        if (response.find(">") != std::string::npos) break;
+    }
+    SetCommTimeouts(elm->getHandle(), &oldCt);
+#else
     ::write(elm->getSock(), full.c_str(), full.size());
     
-    // Leer respuesta con timeout
     char buffer[1024];
     std::string response;
     fd_set fds;
@@ -75,7 +108,7 @@ std::string GMCommands::sendMode22WithHeader(const std::string& pidHex) {
     FD_ZERO(&fds);
     FD_SET(elm->getSock(), &fds);
     tv.tv_sec = 0;
-    tv.tv_usec = 600000; // 600ms timeout
+    tv.tv_usec = 600000;
     
     while (select(elm->getSock() + 1, &fds, NULL, NULL, &tv) > 0) {
         int n = ::recv(elm->getSock(), buffer, sizeof(buffer) - 1, 0);
@@ -88,6 +121,7 @@ std::string GMCommands::sendMode22WithHeader(const std::string& pidHex) {
         tv.tv_sec = 0;
         tv.tv_usec = 300000;
     }
+#endif
     
     // Limpiar respuesta
     response.erase(std::remove(response.begin(), response.end(), '\r'), response.end());
@@ -626,7 +660,11 @@ void GMCommands::scanGMPIDs() {
         } else {
             std::cout << "❌" << std::endl;
         }
+#ifndef Q_OS_WIN
         usleep(50000);
+#else
+        Sleep(50);
+#endif
     }
     
     std::cout << "\n=== COMPLETADO: " << found << " de " << (sizeof(knownPIDs)/sizeof(knownPIDs[0])) << " PIDs modo 22 funcionan ===\n";

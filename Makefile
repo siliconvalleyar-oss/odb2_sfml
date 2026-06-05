@@ -1,5 +1,5 @@
 #!/usr/bin/env make
-# Makefile simplificado para ELM327 OBD-II v7 (Qt5)
+# Makefile simplificado para ELM327 OBD-II v9 (Qt5)
 # Alternativa a CMake para compilación rápida
 
 CXX      = g++
@@ -42,9 +42,18 @@ BIN_DIR  = bin
 # Archivos fuente - buscar todos los .cpp en src/
 SRCS = $(wildcard $(SRC_DIR)/*.cpp)
 OBJS = $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRCS))
-TARGET = $(BIN_DIR)/elm327_app_v7
+TARGET = $(BIN_DIR)/elm327_app_v9
 
-.PHONY: all clean dirs
+.PHONY: all clean dirs docs debug
+
+# Flag para detectar Windows
+ifdef ComSpec
+    CXXFLAGS += -DUSE_PTHREADS
+    # En Windows con MSYS2/MinGW
+    ifeq ($(CXX),g++)
+        LDLIBS += -lws2_32
+    endif
+endif
 
 all: dirs $(TARGET)
 

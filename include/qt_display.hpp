@@ -26,6 +26,7 @@
 #include <QDebug>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QPushButton>
 
 #ifdef USE_QT5_CHARTS
 #include <QtCharts/QChart>
@@ -43,6 +44,7 @@ QT_CHARTS_USE_NAMESPACE
 #include <iomanip>
 #include <ctime>
 #include <sys/stat.h>
+#include <cstdlib>
 
 // ============================================================================
 // Constantes
@@ -85,6 +87,24 @@ class O2ScopeWidget;
 // QtDisplay — Ventana principal con pestañas
 // ============================================================================
 
+// ============================================================================
+// Demo phases — escenarios simulados (paridad con v10)
+// ============================================================================
+
+/// @brief Fases del demo sincronizadas entre sensores.
+enum class DemoPhase {
+    Normal,
+    AccelerationBrusca,  // ⚡ Aceleración brusca
+    PostAccel,           // ↘ Desaceleración post-aceleración
+    FallaSensor,         // ⚠ Falla intermitente de sensor
+    RalentiIrregular,    // 🌀 Ralentí irregular
+    DTCTrigger,          // 🔴 Disparo múltiple de DTC
+    FuelPumpFailure,     // 💀 Presión combustible baja
+    SlowO2Sensor,        // ⏳ Sensor O2 perezoso
+    Overheating,         // 🔥 Sobrecalentamiento
+    Recovery             // 🔧 Recuperación post-falla
+};
+
 /**
  * @brief Ventana principal con QTabWidget para los 3 modos de visualización.
  *
@@ -113,9 +133,18 @@ public:
      */
     void setActiveTab(int index);
 
+protected:
+    void closeEvent(QCloseEvent* event) override {
+        m_closed = true;
+        saveScreenshot();
+        QMainWindow::closeEvent(event);
+    }
+
 private:
     ELM327* m_elm;              ///< Puntero al ELM327 (null si demo mode)
     bool m_demoMode;             ///< True = generar datos simulados
+    bool m_closed = false;       ///< Flag de ventana cerrada
+    QPushButton* m_btnDemo;     ///< Botón de alternar demo en la barra de pestañas
     QTabWidget* m_tabs;         ///< Pestañas de modos
     DashboardWidget* m_dashboard; ///< Widget de dashboard
 #ifdef USE_QT5_CHARTS
@@ -128,6 +157,10 @@ private:
     /** @brief Guarda captura de pantalla de la ventana actual. */
     void saveScreenshot();
 
+private slots:
+    /** @brief Alterna entre modo demo y datos reales. */
+    void toggleDemo();
+
 // --- Público para acceso desde widgets hijos ---
 public:
     /** @brief Genera datos simulados de DashboardData. */
@@ -135,6 +168,25 @@ public:
 
     /** @brief Genera voltaje simulado de sensor O2. */
     static OxygenSensor generateDemoO2();
+
+    // --- Estado compartido de escenarios demo (fijo) ---
+    static DemoPhase demoPhase();
+    static void resetDemo();
+
+    /** @brief Nombre legible del escenario actual. */
+    static QString demoPhaseName();
+
+    /** @brief Short-term fuel trim actual. */
+    static double demoSTFT();
+
+    /** @brief Long-term fuel trim actual. */
+    static double demoLTFT();
+
+    /** @brief Si el escenario actual debe encender MIL. */
+    static bool demoCheckEngine();
+
+    /** @brief Códigos DTC formateados (ej. "P0087\nP0171") para el escenario activo. */
+    static QString demoDTCsText();
 };
 
 // ============================================================================
@@ -152,6 +204,9 @@ class DashboardWidget : public QWidget {
 public:
     explicit DashboardWidget(ELM327* elm, QWidget* parent = nullptr, bool demoMode = false);
 
+    /** @brief Cambia la fuente de datos (real o demo según flag global). */
+    void setELM(ELM327* elm) { m_elm = elm; }
+
 protected:
     void paintEvent(QPaintEvent* event) override;
 
@@ -159,9 +214,14 @@ private slots:
     /** @brief Obtiene nuevos datos del ELM327 y repinta. */
     void tick();
 
+    /** @brief Alterna el estado de parpadeo del indicador de sobrecalentamiento. */
+    void blinkTick();
+
 private:
     ELM327* m_elm;
     QTimer* m_timer;
+    QTimer* m_blinkTimer;        ///< Timer para parpadeo de alerta crítica
+    bool m_blinkOn = true;       ///< Estado actual del parpadeo
     ELM327::DashboardData m_data;
 
     /// Dibuja un indicador analógico con aguja.
@@ -190,6 +250,9 @@ class GraphWidget : public QWidget {
     Q_OBJECT
 public:
     explicit GraphWidget(ELM327* elm, QWidget* parent = nullptr, bool demoMode = false);
+
+    /** @brief Cambia la fuente de datos. */
+    void setELM(ELM327* elm) { m_elm = elm; }
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -232,6 +295,9 @@ class ChartsGraphWidget : public QWidget {
     Q_OBJECT
 public:
     explicit ChartsGraphWidget(ELM327* elm, QWidget* parent = nullptr, bool demoMode = false);
+
+    /** @brief Cambia la fuente de datos. */
+    void setELM(ELM327* elm) { m_elm = elm; }
 
 private slots:
     void tick();
@@ -280,6 +346,9 @@ class O2ScopeWidget : public QWidget {
     Q_OBJECT
 public:
     explicit O2ScopeWidget(ELM327* elm, QWidget* parent = nullptr, bool demoMode = false);
+
+    /** @brief Cambia la fuente de datos. */
+    void setELM(ELM327* elm) { m_elm = elm; }
 
 protected:
     void paintEvent(QPaintEvent* event) override;

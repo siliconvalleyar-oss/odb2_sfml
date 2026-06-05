@@ -1,6 +1,10 @@
-# 🚗 OBD-II Scanner Profesional v7 — Qt5
+# 🚗 OBD-II Scanner Profesional v9 — Qt5
 
 Escáner de diagnóstico automotriz OBD-II con **interfaz gráfica Qt5** y conexión Bluetooth ELM327.
+
+> **Actualizado desde v7**: Corregido bug crítico de parseo de respuestas OBD concatenadas.
+> Ahora velocidad, temperatura, carga, MAF y demás sensores se leen correctamente.
+> Se agregó botón **Salir** en el dashboard Qt y escala automática de RPM.
 
 ## ✨ Características
 
@@ -47,17 +51,6 @@ Todas las ventanas Qt5 tienen:
 - Timeout adaptativo (penalidad STOPPED)
 
 ## 📦 Requisitos
-
-### Script automático de instalación
-
-```bash
-# Instalación automática de todas las dependencias
-cd scripts
-chmod +x install_dependencies_obd2_qt.sh
-sudo ./install_dependencies_obd2_qt.sh
-```
-
-### Instalación manual
 
 ```bash
 # Ubuntu/Debian
@@ -150,8 +143,6 @@ obd2_v7/
 ├── Makefile                # Makefile tradicional alternativo
 ├── Doxyfile                # Configuración Doxygen
 ├── README.md               # Este archivo
-├── scripts/
-│   └── install_dependencies_obd2_qt.sh  # Script de instalación de dependencias
 ├── include/
 │   ├── elm327.hpp          # Driver ELM327 (conexión, comandos AT/STD)
 │   ├── gm_commands.hpp     # Comandos específicos GM (Modo 22)

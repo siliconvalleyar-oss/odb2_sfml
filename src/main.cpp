@@ -4,6 +4,9 @@
  * @details Inicializa QApplication para la interfaz gráfica Qt5,
  *          luego ejecuta el bucle principal del menú interactivo
  *          de diagnóstico automotriz.
+ *
+ * La aplicación arranca en modo conexión real. Para activar el
+ * modo demo (sin hardware), use la opción 44 del menú interactivo.
  */
 
 #include "obd2_app.hpp"
@@ -29,10 +32,12 @@ int main(int argc, char* argv[]) {
     // Inicializar QApplication ANTES de cualquier widget Qt
     QApplication qtApp(argc, argv);
     qtApp.setApplicationName("OBD-II Scanner Qt5");
-    qtApp.setApplicationVersion("7.0");
+    qtApp.setApplicationVersion("9.0");
+    qtApp.setApplicationDisplayName("OBD-II Scanner Qt5 v9");
     qtApp.setOrganizationName("Freebuff");
 
     // Crear y ejecutar la aplicación de diagnóstico
+    // Menú interactivo: opción 7 para dashboard real, opción 44 para demo
     auto device = std::make_unique<OBD::App>();
     device->run();
 

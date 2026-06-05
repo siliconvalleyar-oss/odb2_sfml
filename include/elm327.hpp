@@ -20,6 +20,10 @@
 #include <map>
 #include <functional>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 // Forward declaration
 class SessionLogger;
 
@@ -150,8 +154,13 @@ public:
     bool connectBT();
     void disconnect();
     
+#ifdef Q_OS_WIN
+    bool isConnected() { return m_hCom != INVALID_HANDLE_VALUE; }
+    bool isOnline() { return m_hCom != INVALID_HANDLE_VALUE; }
+#else
     bool isConnected() { return sock >= 0; }
     bool isOnline() { return sock >= 0; }
+#endif
 
     std::string send(const std::string& cmd, int delayMs = 200);
 
@@ -299,12 +308,21 @@ public:
     // ========== Utilidades ==========
 
     std::vector<std::string> splitResponse(const std::string& response);
+#ifndef Q_OS_WIN
     int getSock() const { return sock; }
+#endif
+#ifdef Q_OS_WIN
+    HANDLE getHandle() const { return m_hCom; }
+#endif
     int getStoppedPenaltyMs() const { return m_stoppedPenaltyMs; }
     int getStoppedCount() const { return m_stoppedCount; }
 
 private:
+#ifdef Q_OS_WIN
+    HANDLE m_hCom;                  ///< Handle del puerto COM en Windows
+#else
     int sock;                       ///< Socket RFCOMM Bluetooth
+#endif
     std::string mac;                ///< Dirección MAC del ELM327
     int channel;                    ///< Canal RFCOMM (usualmente 1)
     bool m_stoppedRecovery;         ///< Flag anti-recursión para STOPPED
