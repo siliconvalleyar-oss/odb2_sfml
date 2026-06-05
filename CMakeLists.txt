@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
-project(elm327_app_v9
-    VERSION 9.0
-    DESCRIPTION "Escáner OBD-II profesional con interfaz gráfica Qt5 — v9"
+project(elm327_app_v11
+    VERSION 11.0
+    DESCRIPTION "Escáner OBD-II profesional con interfaz gráfica Qt5 — v11"
     LANGUAGES CXX
 )
 
@@ -33,12 +33,6 @@ else()
     message(STATUS "  Instalar: sudo apt install libqt5charts5-dev")
 endif()
 
-# Bluetooth (para conexión ELM327)
-find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
-    pkg_check_modules(BLUEZ bluez)
-endif()
-
 # ============================================================================
 # Fuentes
 # ============================================================================
@@ -61,6 +55,24 @@ set(HEADERS
 )
 
 # ============================================================================
+# Bluetooth: intentar pkg-config primero, luego find_library directo
+# ============================================================================
+
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(BLUEZ bluez)
+endif()
+
+if(NOT BLUEZ_FOUND)
+    find_library(BLUEZ_LIBRARY bluetooth)
+    if(BLUEZ_LIBRARY)
+        set(BLUEZ_FOUND TRUE)
+        set(BLUEZ_LIBRARIES ${BLUEZ_LIBRARY})
+        message(STATUS "Bluetooth (libbluetooth) encontrado via find_library: ${BLUEZ_LIBRARY}")
+    endif()
+endif()
+
+# ============================================================================
 # Definiciones del compilador
 # ============================================================================
 
@@ -80,34 +92,34 @@ endif()
 # Ejecutable
 # ============================================================================
 
-add_executable(elm327_app_v9
+add_executable(elm327_app_v11
     ${SOURCES}
     ${HEADERS}
 )
 
 # Directorios de includes
-target_include_directories(elm327_app_v9 PRIVATE
+target_include_directories(elm327_app_v11 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 # Enlazar Qt5
-target_link_libraries(elm327_app_v9 PRIVATE
+target_link_libraries(elm327_app_v11 PRIVATE
     Qt5::Widgets
 )
 
 # Enlazar Qt5 Charts (opcional)
 if(Qt5Charts_FOUND)
-    target_link_libraries(elm327_app_v9 PRIVATE
+    target_link_libraries(elm327_app_v11 PRIVATE
         Qt5::Charts
     )
 endif()
 
 # Enlazar Bluetooth
 if(BLUEZ_FOUND)
-    target_link_libraries(elm327_app_v9 PRIVATE
+    target_link_libraries(elm327_app_v11 PRIVATE
         ${BLUEZ_LIBRARIES}
     )
-    target_include_directories(elm327_app_v9 PRIVATE
+    target_include_directories(elm327_app_v11 PRIVATE
         ${BLUEZ_INCLUDE_DIRS}
     )
     message(STATUS "Bluetooth (bluez) detectado: sí")
@@ -121,7 +133,7 @@ endif()
 
 # Advertencias
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(elm327_app_v9 PRIVATE
+    target_compile_options(elm327_app_v11 PRIVATE
         -Wall -Wextra -Wpedantic
         -Wno-unused-parameter
     )
@@ -133,9 +145,9 @@ endif()
 
 # make run: ejecuta la aplicación
 add_custom_target(run
-    COMMAND ./elm327_app_v9
+    COMMAND ./elm327_app_v11
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    DEPENDS elm327_app_v9
+    DEPENDS elm327_app_v11
 )
 
 # make clean_logs: limpia los archivos de log
@@ -148,4 +160,4 @@ add_custom_target(clean_logs
 # Instalación
 # ============================================================================
 
-install(TARGETS elm327_app_v9 DESTINATION bin)
+install(TARGETS elm327_app_v11 DESTINATION bin)

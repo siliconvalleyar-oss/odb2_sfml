@@ -32,8 +32,8 @@ int main(int argc, char* argv[]) {
     // Inicializar QApplication ANTES de cualquier widget Qt
     QApplication qtApp(argc, argv);
     qtApp.setApplicationName("OBD-II Scanner Qt5");
-    qtApp.setApplicationVersion("9.0");
-    qtApp.setApplicationDisplayName("OBD-II Scanner Qt5 v9");
+    qtApp.setApplicationVersion("11.0");
+    qtApp.setApplicationDisplayName("OBD-II Scanner Qt5 v11");
     qtApp.setOrganizationName("Freebuff");
 
     // Crear y ejecutar la aplicación de diagnóstico

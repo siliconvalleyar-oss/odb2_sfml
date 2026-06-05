@@ -44,10 +44,10 @@ bool Logger::ensureLogsDir()
 #else
         if (mkdir("logs", 0755) != 0) {
 #endif
-            std::cerr << "[WARN] No se pudo crear directorio logs/" << std::endl;
+            std::cerr << "[monitor] No se pudo crear directorio logs/" << std::endl;
             return false;
         }
-        std::cout << "[INFO] Directorio logs/ creado" << std::endl;
+        std::cout << "[monitor] Directorio logs/ creado" << std::endl;
     }
     return true;
 }
@@ -60,7 +60,7 @@ bool Logger::open()
         file = std::make_unique<std::ofstream>(filename);
         if (!file->is_open()) return false;
         *file << "timestamp,key,value\n";
-        std::cout << "[LOG] " << filename << " (fallback)" << std::endl;
+        std::cout << "[monitor] " << filename << " (fallback)" << std::endl;
         return true;
     }
 
@@ -85,12 +85,12 @@ bool Logger::open()
     file = std::make_unique<std::ofstream>(filename);
 
     if (!file->is_open()) {
-        std::cerr << "[ERROR] No se pudo crear " << filename << std::endl;
+        std::cerr << "[monitor] No se pudo crear " << filename << std::endl;
         return false;
     }
 
     *file << "timestamp,key,value\n";
-    std::cout << "[LOG] " << filename << std::endl;
+    std::cout << "[monitor] " << filename << std::endl;
 
     return true;
 }
@@ -165,7 +165,7 @@ bool SessionLogger::open()
 
     file = std::make_unique<std::ofstream>(filename);
     if (!file->is_open()) {
-        std::cerr << "[ERROR] No se pudo crear session log: " << filename << std::endl;
+        std::cerr << "[monitor] No se pudo crear session log: " << filename << std::endl;
         return false;
     }
 
@@ -173,7 +173,7 @@ bool SessionLogger::open()
     *file << timestamp() << "|START|Sesión iniciada - ELM327 OBD-II||||\n";
     file->flush();
 
-    std::cout << "[SESSION] " << filename << std::endl;
+    std::cout << "[monitor] " << filename << std::endl;
     return true;
 }
 
